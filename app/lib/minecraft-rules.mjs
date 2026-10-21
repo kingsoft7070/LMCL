@@ -28,9 +28,15 @@ export function libraryPlan(metadata, platform = process.platform, arch = proces
   const artifacts = [], natives = [];
   for (const library of metadata.libraries ?? []) {
     if (!allowed(library.rules, platform, arch)) continue;
+    const classifiedNative = library.name?.split(':')[3]?.match(/^natives-(windows|linux|macos|osx)(?:-(arm64|aarch64|arm32|x86|x86_64))?$/);
+    if (classifiedNative) {
+      const nativeOS = classifiedNative[1] === 'macos' ? 'osx' : classifiedNative[1];
+      const nativeArch = ({ arm64: 'arm64', aarch64: 'arm64', arm32: 'arm', x86: 'ia32', x86_64: 'x64' })[classifiedNative[2]] ?? 'x64';
+      if (nativeOS !== minecraftOS(platform) || nativeArch !== arch) continue;
+    }
     if (library.downloads?.artifact) {
       artifacts.push(library.downloads.artifact);
-      if (/-natives-(windows|linux|macos|osx)/.test(library.name ?? '')) natives.push(library.downloads.artifact);
+      if (classifiedNative) natives.push(library.downloads.artifact);
     }
     const classifier = library.natives?.[minecraftOS(platform)]?.replace('${arch}', arch === 'ia32' ? '32' : '64');
     if (classifier) {

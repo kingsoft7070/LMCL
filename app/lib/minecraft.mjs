@@ -23,7 +23,10 @@ async function extractNatives(archive, destination) {
         if (!/\.(dll|so|dylib|jnilib)$/i.test(entry.fileName)) { zip.readEntry(); return; }
         if (entry.uncompressedSize > 128 * 1024 * 1024) { reject(new Error('原生库文件过大')); return; }
         let output;
-        try { output = inside(destination, entry.fileName); } catch (error) { reject(error); return; }
+        try {
+          inside(destination, entry.fileName);
+          output = inside(destination, path.posix.basename(entry.fileName));
+        } catch (error) { reject(error); return; }
         zip.openReadStream(entry, async (error, stream) => {
           if (error) { reject(error); return; }
           try {

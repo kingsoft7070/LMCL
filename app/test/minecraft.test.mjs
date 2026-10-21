@@ -46,6 +46,20 @@ test('launch keeps arguments separate and never adds a server target or a shell 
   assert.ok(args[args.indexOf('-cp') + 1].includes(';'));
 });
 
+test('modern native artifact classifiers select the target CPU even when Mojang only specifies OS rules', () => {
+  const libraries = ['', '-x86', '-arm64'].map(suffix => ({
+    name: `org.lwjgl:lwjgl:3.3.1:natives-windows${suffix}`,
+    rules: [{ action: 'allow', os: { name: 'windows' } }],
+    downloads: { artifact: { ...artifact, path: `org/lwjgl/lwjgl-3.3.1-natives-windows${suffix}.jar` } },
+  }));
+  for (const [arch, suffix] of [['x64', ''], ['ia32', '-x86'], ['arm64', '-arm64']]) {
+    const plan = libraryPlan({ libraries }, 'win32', arch);
+    assert.equal(plan.artifacts.length, 1);
+    assert.equal(plan.natives.length, 1);
+    assert.equal(plan.natives[0].path, `org/lwjgl/lwjgl-3.3.1-natives-windows${suffix}.jar`);
+  }
+});
+
 test('unsupported inheritance, missing placeholders and unsafe filesystem paths are rejected', () => {
   assert.throws(() => launchArguments({ ...metadata, inheritsFrom: '1.20.1' }, { root: '.', profile: createOfflineProfile('Player') }));
   assert.throws(() => expandArguments(['${not_supported}'], {}));
