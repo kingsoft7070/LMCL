@@ -1,0 +1,217 @@
+import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
+import path from 'node:path';
+import os from 'node:os';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { readFile, writeFile, mkdir, rename, mkdtemp, open, access } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { createOfflineProfile } from '../core/src/accounts.mjs';
+import { launcherSettings, switchLauncherMode, serverProvider } from '../core/src/server-mode.mjs';
+import { versionCatalog, installVanilla, importDirectory, readMetadata } from './lib/minecraft.mjs';
+import { launchArguments } from './lib/minecraft-rules.mjs';
+import { discoverJava, inspectJava } from './lib/java.mjs';
+import { getJSON } from './lib/network.mjs';
+
+const directory = path.dirname(fileURLToPath(import.meta.url));
+const documentURL = pathToFileURL(path.join(directory, 'index.html')).href;
+const smoke = process.argv.includes('--smoke-test');
+if (smoke) app.disableHardwareAcceleration();
+let window, state, stateFile, dataRoot, task, javaCache;
+const running = new Map();
+const launching = new Set();
+let saveQueue = Promise.resolve();
+app.setName('LMCL');
+app.setAppUserModelId('io.github.llroxy-by.lmcl');
+if (!smoke && !app.requestSingleInstanceLock()) app.quit();
+app.on('second-instance', () => { window?.show(); window?.focus(); });
+
+function persist() {
+  const content = JSON.stringify(state, null, 2);
+  saveQueue = saveQueue.catch(() => {}).then(async () => {
+    await writeFile(`${stateFile}.tmp`, content, { mode: 0o600 });
+    await rename(`${stateFile}.tmp`, stateFile);
+  });
+  return saveQueue;
+}
+function snapshot() {
+  return { ...structuredClone(state), version: app.getVersion(), platform: process.platform,
+    dataRoot, running: [...running.keys()], busy: Boolean(task), java: javaCache ?? [] };
+}
+function notify() { if (window && !window.isDestroyed()) window.webContents.send('state', snapshot()); }
+function progress(value) { if (window && !window.isDestroyed()) window.webContents.send('progress', value); }
+function instance(id) {
+  const entry = state.instances.find(item => item.id === id);
+  if (!entry) throw new Error('未找到这个实例');
+  return entry;
+}
+function register(name, callback) {
+  ipcMain.handle(name, async (event, ...args) => {
+    if (event.sender !== window?.webContents || event.senderFrame !== window.webContents.mainFrame || event.senderFrame.url !== documentURL) {
+      throw new Error('请求来源无效');
+    }
+    try { return { ok: true, value: await callback(...args) }; }
+    catch (error) {
+      return { ok: false, error: error.name === 'AbortError' ? '操作已取消' : error.message || '操作失败，请重试' };
+    }
+  });
+}
+
+function registerHandlers() {
+  register('state:get', () => snapshot());
+  register('profile:save', async name => {
+    state.profile = createOfflineProfile(name); await persist(); notify(); return state.profile;
+  });
+  register('mode:set', async mode => {
+    state.settings = switchLauncherMode(state.settings, mode); await persist(); notify();
+  });
+  register('provider:add', async input => {
+    const provider = serverProvider(input);
+    if (state.settings.providers.some(item => item.id.toLowerCase() === provider.id.toLowerCase())) throw new Error('已有同名的接入方 ID');
+    state.settings = launcherSettings({ ...state.settings, providers: [...state.settings.providers, provider] });
+    await persist(); notify();
+  });
+  register('provider:remove', async id => {
+    state.settings.providers = state.settings.providers.filter(provider => provider.id !== id); await persist(); notify();
+  });
+  register('provider:catalog', async id => {
+    if (state.settings.mode !== 'server') throw new Error('请先切换到服务器模式');
+    const provider = state.settings.providers.find(item => item.id === id);
+    if (!provider?.enabled) throw new Error('接入方未启用');
+    const data = await getJSON(new URL('v1/servers', provider.apiRoot).href);
+    if (data.schemaVersion !== 1 || !Array.isArray(data.servers) || data.servers.length > 500) throw new Error('接口目录格式不符合 v1 约定');
+    return data.servers.map(server => ({ id: String(server.id).slice(0, 128), name: String(server.name).slice(0, 200),
+      status: server.status && ['online', 'offline', 'unknown', 'maintenance'].includes(server.status.state) ? {
+        state: server.status.state,
+        online: Number.isSafeInteger(server.status.online) && server.status.online >= 0 ? server.status.online : null,
+        max: Number.isSafeInteger(server.status.max) && server.status.max >= 0 ? server.status.max : null,
+      } : { state: 'unknown', online: null, max: null },
+    }));
+  });
+  register('java:discover', async () => { javaCache = await discoverJava(state.javaPath); notify(); return javaCache; });
+  register('java:choose', async () => {
+    const result = await dialog.showOpenDialog(window, { title: '选择 Java 可执行文件', properties: ['openFile'],
+      ...(process.platform === 'win32' ? { filters: [{ name: 'Java', extensions: ['exe'] }] } : {}) });
+    if (result.canceled) return;
+    const file = result.filePaths[0];
+    if (!/^java(?:\.exe)?$/i.test(path.basename(file))) throw new Error('请选择 bin 目录中的 java.exe（或 java）');
+    const java = await inspectJava(file);
+    state.javaPath = file; javaCache = [java]; await persist(); notify(); return java;
+  });
+  register('memory:save', async memory => {
+    if (!Number.isInteger(memory) || memory < 1024 || memory > 32768) throw new Error('内存范围为 1024–32768 MB');
+    state.memoryMB = memory; await persist(); notify();
+  });
+  register('versions:list', async () => (await versionCatalog()).map(({ id, type, releaseTime }) => ({ id, type, releaseTime })));
+  register('game:install', async ({ version, name }) => {
+    if (task) throw new Error('请等待当前下载结束，或先取消下载');
+    if (typeof version !== 'string' || !/^[a-zA-Z0-9_.-]{1,100}$/.test(version) || typeof name !== 'string' || name.length > 100) throw new Error('版本或名称无效');
+    task = new AbortController(); notify();
+    try {
+      const entry = await installVanilla({ version, name, gamesRoot: path.join(dataRoot, 'instances'), signal: task.signal, onProgress: progress });
+      state.instances.push(entry); await persist(); return entry;
+    } finally { task = null; progress(null); notify(); }
+  });
+  register('game:cancel', () => { task?.abort(); });
+  register('game:import', async () => {
+    const result = await dialog.showOpenDialog(window, { title: '选择包含 versions 的游戏目录', properties: ['openDirectory'] });
+    if (result.canceled) return [];
+    const entries = await importDirectory(result.filePaths[0]);
+    const added = entries.filter(entry => !state.instances.some(old => old.root === entry.root && old.version === entry.version));
+    state.instances.push(...added); await persist(); notify(); return added;
+  });
+  register('game:folder', async id => {
+    const result = await shell.openPath(instance(id).root);
+    if (result) throw new Error(result);
+  });
+  register('game:launch', async id => {
+    if (task) throw new Error('请先等待下载完成');
+    if (!state.profile) throw new Error('请先在账户页创建离线角色');
+    if (running.has(id) || launching.has(id)) throw new Error('这个实例已经在启动或运行');
+    launching.add(id);
+    try {
+    const entry = instance(id), metadata = await readMetadata(entry);
+    await access(path.join(entry.root, 'versions', entry.version, `${entry.version}.jar`)).catch(() => { throw new Error('缺少游戏 jar 文件，请重新下载完整版本'); });
+    const available = await discoverJava(state.javaPath);
+    javaCache = available;
+    const required = metadata.javaVersion?.majorVersion ?? entry.javaMajor;
+    const java = available.find(item => item.major === required);
+    if (!java) throw new Error(`这个版本需要 Java ${required}，请在设置页选择对应的 Java`);
+    const args = launchArguments(metadata, { root: entry.root, profile: createOfflineProfile(state.profile.name), memoryMB: state.memoryMB });
+    const log = await open(path.join(entry.root, 'lmcl-game.log'), 'w');
+    try {
+      const child = spawn(java.path, args, { cwd: entry.root, shell: false, windowsHide: true, detached: false, stdio: ['ignore', log.fd, log.fd] });
+      // Reserve before waiting for spawn so repeated clicks cannot launch twice.
+      running.set(id, child);
+      child.once('exit', code => { running.delete(id); progress({ phase: code === 0 ? '游戏已退出' : `游戏已退出（${code}），可在实例文件夹查看 lmcl-game.log`, done: 0, total: 0 }); notify(); });
+      await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
+      notify(); return { started: true };
+    } catch (error) { running.delete(id); throw error; }
+    finally { await log.close(); }
+    } finally { launching.delete(id); }
+  });
+  register('data:folder', async () => { const result = await shell.openPath(dataRoot); if (result) throw new Error(result); });
+  register('bedrock:open', async () => {
+    if (process.platform !== 'win32') throw new Error('此入口仅适用于 Windows');
+    await shell.openExternal('minecraft://');
+  });
+}
+
+async function smokeTest() {
+  const output = process.env.LMCL_SMOKE_OUT || path.join(process.cwd(), 'smoke-output');
+  await mkdir(output, { recursive: true });
+  const timer = setTimeout(() => { app.exit(1); }, 60000);
+  try {
+    const result = await window.webContents.executeJavaScript(`(async () => {
+      const deadline = Date.now() + 10000;
+      while (!window.__ready && Date.now() < deadline) await new Promise(r => setTimeout(r, 50));
+      if (!window.__ready) throw new Error('UI failed to initialize');
+      await window.lmcl.saveProfile('LMCL_Test');
+      await window.lmcl.setMode('server');
+      let state = await window.lmcl.getState();
+      if (state.settings.mode !== 'server' || state.settings.providers.length) throw new Error('Server mode isolation failed');
+      await window.lmcl.setMode('normal');
+      state = await window.lmcl.getState();
+      if (state.profile.name !== 'LMCL_Test') throw new Error('Profile lost during mode switch');
+      if (!document.querySelector('.avatar').complete || !document.querySelector('.avatar').naturalWidth) throw new Error('Avatar did not load');
+      return { title: document.title, mode: state.settings.mode, profile: state.profile.name, providers: state.settings.providers.length };
+    })()`);
+    await new Promise(resolve => setTimeout(resolve, 500));
+    await writeFile(path.join(output, 'home.png'), (await window.webContents.capturePage()).toPNG());
+    await window.webContents.executeJavaScript(`document.querySelector('[data-nav="downloads"]').click()`);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    await writeFile(path.join(output, 'downloads.png'), (await window.webContents.capturePage()).toPNG());
+    await writeFile(path.join(output, 'smoke.json'), JSON.stringify({ ok: true, platform: process.platform, version: app.getVersion(), ...result }, null, 2));
+    clearTimeout(timer); app.exit(0);
+  } catch (error) {
+    await writeFile(path.join(output, 'smoke-error.txt'), error.stack || String(error));
+    clearTimeout(timer); app.exit(1);
+  }
+}
+
+app.whenReady().then(async () => {
+  if (smoke) app.setPath('userData', await mkdtemp(path.join(os.tmpdir(), 'lmcl-smoke-')));
+  dataRoot = app.getPath('userData'); stateFile = path.join(dataRoot, 'launcher.json');
+  await mkdir(dataRoot, { recursive: true });
+  try { state = JSON.parse(await readFile(stateFile, 'utf8')); }
+  catch (error) {
+    if (error.code !== 'ENOENT') throw new Error('配置文件无法读取，请备份后检查 launcher.json');
+    state = { schemaVersion: 1, settings: launcherSettings(), profile: null, instances: [], javaPath: '', memoryMB: 4096 };
+  }
+  state.settings = launcherSettings(state.settings);
+  if (!Array.isArray(state.instances)) throw new Error('实例列表格式无效');
+  window = new BrowserWindow({ width: 1200, height: 820, minWidth: 1000, minHeight: 700,
+    title: 'LMCL', backgroundColor: '#f5f6fa', show: !smoke, autoHideMenuBar: true,
+    webPreferences: { preload: path.join(directory, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  window.setMenu(null);
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.webContents.on('will-navigate', event => event.preventDefault());
+  window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+  window.webContents.on('render-process-gone', () => { if (smoke) app.exit(1); });
+  registerHandlers();
+  await window.loadFile(path.join(directory, 'index.html'));
+  if (smoke) await smokeTest();
+}).catch(error => {
+  if (!smoke) dialog.showErrorBox('LMCL 启动失败', error.message);
+  console.error(error); app.exit(1);
+});
+app.on('window-all-closed', () => { task?.abort(); app.quit(); });

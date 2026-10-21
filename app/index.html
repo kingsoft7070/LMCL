@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>LMCL</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">LMCL<span>PREVIEW</span></div>
+    <nav id="navigation" aria-label="主导航"></nav>
+    <div class="sidebar-bottom">
+      <div class="author"><img class="avatar" src="assets/avatar.png" alt="llroxy 的头像"><div><strong>llroxy</strong><span>把想法慢慢做出来</span></div></div>
+      <button class="about-link" data-nav="about">关于 LMCL <span>↗</span></button>
+    </div>
+  </aside>
+  <div class="workspace">
+    <header class="topbar"><div id="breadcrumb">我的游戏</div><div class="top-actions"><span class="preview-label">0.1.0 预览版</span><div class="mode-switch" aria-label="使用模式"><button data-mode="normal">普通</button><button data-mode="server">服务器</button></div></div></header>
+    <main id="content" tabindex="-1"></main>
+    <footer id="taskbar"><span>正在读取本地配置…</span></footer>
+  </div>
+  <div id="toast" role="status" hidden></div>
+  <dialog id="provider-dialog"><form id="provider-form"><h2>添加服务器接口</h2><p>填写服务器运营者提供的 LMCL 接入地址</p><label>名称<input name="name" required maxlength="100" placeholder="例如：朋友的服务器"></label><label>接入方 ID<input name="id" required pattern="[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}" placeholder="例如：my-community"></label><label>接口根地址<input name="apiRoot" type="url" required placeholder="https://example.org/lmcl/"></label><div class="dialog-actions"><button type="button" data-act="close-dialog">取消</button><button class="primary" type="submit">添加接口</button></div></form></dialog>
+  <script type="module" src="renderer.js"></script>
+</body>
+</html>

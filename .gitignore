@@ -18,3 +18,5 @@ accounts.json
 tokens.json
 local/
 .minecraft/
+release/
+smoke-output/

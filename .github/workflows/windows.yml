@@ -1,0 +1,57 @@
+name: Windows EXE
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['app/**', 'core/src/**', 'examples/**', 'package*.json', '.github/workflows/windows.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run smoke
+      - run: npm run build:win
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Test packaged application
+        shell: pwsh
+        run: |
+          $env:LMCL_SMOKE_OUT = Join-Path $PWD 'smoke-output-packaged'
+          $exe = Get-ChildItem release/*.exe | Select-Object -First 1
+          $p = Start-Process -FilePath $exe.FullName -ArgumentList '--smoke-test' -PassThru
+          if (-not $p.WaitForExit(90000)) { $p.Kill(); throw 'Packaged app timed out' }
+          if ($p.ExitCode -ne 0) { throw "Packaged app failed: $($p.ExitCode)" }
+          if (-not (Test-Path "$env:LMCL_SMOKE_OUT/smoke.json")) { throw 'Missing smoke report' }
+      - name: Checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem release/*.exe | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+          } | Set-Content release/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LMCL-windows-x64
+          path: |
+            release/*.exe
+            release/SHA256SUMS.txt
+            smoke-output-packaged/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: LMCL-build-diagnostics
+          path: |
+            smoke-output/**
+            smoke-output-packaged/**
