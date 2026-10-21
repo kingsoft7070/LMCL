@@ -192,14 +192,16 @@ async function smokeTest() {
       await new Promise(resolve => setTimeout(resolve, 200));
       for (const page of ['home', 'downloads', 'accounts', 'settings', 'about']) {
         const layout = await window.webContents.executeJavaScript(`(() => {
+          document.getElementById('content').scrollTop = 10000;
           document.querySelector('[data-nav="${page}"]').click();
           const content = document.getElementById('content');
           const footer = document.getElementById('taskbar').getBoundingClientRect();
           return { page: '${page}', width: innerWidth, height: innerHeight,
             overflow: Math.max(document.documentElement.scrollWidth - innerWidth, content.scrollWidth - content.clientWidth),
-            footerVisible: footer.top >= 0 && footer.bottom <= innerHeight + 1 };
+            footerVisible: footer.top >= 0 && footer.bottom <= innerHeight + 1,
+            scrollTop: content.scrollTop };
         })()`);
-        if (layout.overflow > 1 || !layout.footerVisible) throw new Error(`Compact layout overflow: ${JSON.stringify(layout)}`);
+        if (layout.overflow > 1 || !layout.footerVisible || layout.scrollTop !== 0) throw new Error(`Compact layout overflow: ${JSON.stringify(layout)}`);
         layouts.push(layout);
         if (page === 'home' || page === 'downloads') {
           await new Promise(resolve => setTimeout(resolve, 160));

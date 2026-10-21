@@ -67,14 +67,14 @@ function renderTask() {
 document.addEventListener('click', async event => {
   const element = event.target.closest('button');
   if (!element || element.disabled) return;
-  if (element.dataset.nav) { page = element.dataset.nav; render(); return; }
+  if (element.dataset.nav) { page = element.dataset.nav; render(); document.getElementById('content').scrollTop = 0; return; }
   const action = element.dataset.act, id = element.dataset.id;
   try {
     if (element.dataset.mode) {
       page = element.dataset.mode === 'server' ? 'servers' : 'home';
-      await api.setMode(element.dataset.mode); state = await api.getState(); render(); return;
+      await api.setMode(element.dataset.mode); state = await api.getState(); render(); document.getElementById('content').scrollTop = 0; return;
     }
-    if (action === 'go-download') { page = 'downloads'; render(); }
+    if (action === 'go-download') { page = 'downloads'; render(); document.getElementById('content').scrollTop = 0; }
     if (action === 'versions') { element.disabled = true; element.textContent = '获取中…'; versions = await api.versions(); render(); }
     if (action === 'import') { const added = await api.importGame(); if (added?.length) { page = 'home'; state = await api.getState(); render(); toast(`已导入 ${added.length} 个原版实例`); } }
     if (action === 'launch') { element.disabled = true; element.textContent = '准备启动…'; await api.launch(id); toast('已启动，游戏窗口将单独打开'); }
