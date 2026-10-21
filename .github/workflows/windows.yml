@@ -55,3 +55,4 @@ jobs:
           path: |
             smoke-output/**
             smoke-output-packaged/**
+            release/*.exe

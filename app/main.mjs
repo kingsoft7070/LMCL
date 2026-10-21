@@ -4,6 +4,7 @@ import os from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readFile, writeFile, mkdir, rename, mkdtemp, open, access } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import { createOfflineProfile } from '../core/src/accounts.mjs';
 import { launcherSettings, switchLauncherMode, serverProvider } from '../core/src/server-mode.mjs';
 import { versionCatalog, installVanilla, importDirectory, readMetadata } from './lib/minecraft.mjs';
@@ -45,7 +46,13 @@ function instance(id) {
 }
 function register(name, callback) {
   ipcMain.handle(name, async (event, ...args) => {
-    if (event.sender !== window?.webContents || event.senderFrame !== window.webContents.mainFrame || event.senderFrame.url !== documentURL) {
+    let sameDocument = false;
+    try {
+      // Windows portable extraction may use a short (8.3) temp path while
+      // Chromium reports its long equivalent. Compare actual local files.
+      sameDocument = realpathSync(fileURLToPath(event.senderFrame.url)) === realpathSync(fileURLToPath(documentURL));
+    } catch { /* Reject non-file frames and missing documents. */ }
+    if (event.sender !== window?.webContents || event.senderFrame !== window.webContents.mainFrame || !sameDocument) {
       throw new Error('请求来源无效');
     }
     try { return { ok: true, value: await callback(...args) }; }
@@ -183,6 +190,11 @@ async function smokeTest() {
     clearTimeout(timer); app.exit(0);
   } catch (error) {
     await writeFile(path.join(output, 'smoke-error.txt'), error.stack || String(error));
+    try {
+      const details = await window.webContents.executeJavaScript(`JSON.stringify({url:location.href,text:document.body.innerText,bridge:typeof window.lmcl})`);
+      await writeFile(path.join(output, 'smoke-page.json'), details);
+      await writeFile(path.join(output, 'error.png'), (await window.webContents.capturePage()).toPNG());
+    } catch { /* Preserve the original failure report. */ }
     clearTimeout(timer); app.exit(1);
   }
 }
