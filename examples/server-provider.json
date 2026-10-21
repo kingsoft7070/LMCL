@@ -1,0 +1,6 @@
+{
+  "id": "example-community",
+  "name": "示例社区",
+  "apiRoot": "https://servers.example.org/lmcl/",
+  "enabled": true
+}

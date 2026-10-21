@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "servers": [
+    {
+      "id": "survival",
+      "name": "示例生存服",
+      "packId": "survival-client",
+      "acceptedAccounts": ["microsoft", "littleskin", "offline"],
+      "status": {
+        "state": "unknown",
+        "online": null,
+        "max": null,
+        "checkedAt": null
+      },
+      "connection": {
+        "host": "play.example.org",
+        "port": 25565
+      }
+    }
+  ]
+}
