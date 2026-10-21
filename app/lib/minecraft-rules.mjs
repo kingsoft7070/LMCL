@@ -76,7 +76,7 @@ export function launchArguments(metadata, { root, profile, memoryMB = 4096, plat
     auth_player_name: profile.name, auth_uuid: profile.uuid.replaceAll('-', ''), auth_access_token: '0',
     user_type: 'legacy', user_properties: '{}', version_name: metadata.id, version_type: metadata.type ?? 'release',
     game_directory: root, assets_root: path.join(root, 'assets'), assets_index_name: metadata.assetIndex?.id ?? metadata.assets,
-    natives_directory: path.join(root, 'natives'), launcher_name: 'LMCL', launcher_version: '0.1.0-preview.1',
+    natives_directory: path.join(root, 'natives'), launcher_name: 'LMCL', launcher_version: '0.1.0-preview.2',
     classpath, classpath_separator: separator, library_directory: path.join(root, 'libraries'),
     auth_xuid: '', clientid: '',
   };

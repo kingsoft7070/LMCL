@@ -17,7 +17,7 @@ export function officialURL(value) {
 async function responseFor(url, signal, official) {
   let current = official ? officialURL(url) : url;
   for (let attempt = 0; attempt < 5; attempt++) {
-    const response = await fetch(current, { signal, redirect: 'manual', headers: { 'User-Agent': 'LMCL/0.1.0-preview.1' } });
+    const response = await fetch(current, { signal, redirect: 'manual', headers: { 'User-Agent': 'LMCL/0.1.0-preview.2' } });
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       await response.body?.cancel();
       if (!official) throw new Error('服务器接口发生重定向，请检查接口地址');

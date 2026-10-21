@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, screen } from 'electron';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -186,7 +186,28 @@ async function smokeTest() {
     await window.webContents.executeJavaScript(`document.querySelector('[data-nav="downloads"]').click()`);
     await new Promise(resolve => setTimeout(resolve, 300));
     await writeFile(path.join(output, 'downloads.png'), (await window.webContents.capturePage()).toPNG());
-    await writeFile(path.join(output, 'smoke.json'), JSON.stringify({ ok: true, platform: process.platform, version: app.getVersion(), ...result }, null, 2));
+    const layouts = [];
+    for (const size of [[window.getBounds().width, window.getBounds().height], window.getMinimumSize()]) {
+      window.setSize(...size);
+      await new Promise(resolve => setTimeout(resolve, 200));
+      for (const page of ['home', 'downloads', 'accounts', 'settings', 'about']) {
+        const layout = await window.webContents.executeJavaScript(`(() => {
+          document.querySelector('[data-nav="${page}"]').click();
+          const content = document.getElementById('content');
+          const footer = document.getElementById('taskbar').getBoundingClientRect();
+          return { page: '${page}', width: innerWidth, height: innerHeight,
+            overflow: Math.max(document.documentElement.scrollWidth - innerWidth, content.scrollWidth - content.clientWidth),
+            footerVisible: footer.top >= 0 && footer.bottom <= innerHeight + 1 };
+        })()`);
+        if (layout.overflow > 1 || !layout.footerVisible) throw new Error(`Compact layout overflow: ${JSON.stringify(layout)}`);
+        layouts.push(layout);
+        if (page === 'home' || page === 'downloads') {
+          await new Promise(resolve => setTimeout(resolve, 160));
+          await writeFile(path.join(output, `${page}-small.png`), (await window.webContents.capturePage()).toPNG());
+        }
+      }
+    }
+    await writeFile(path.join(output, 'smoke.json'), JSON.stringify({ ok: true, platform: process.platform, version: app.getVersion(), ...result, layouts }, null, 2));
     clearTimeout(timer); app.exit(0);
   } catch (error) {
     await writeFile(path.join(output, 'smoke-error.txt'), error.stack || String(error));
@@ -210,7 +231,9 @@ app.whenReady().then(async () => {
   }
   state.settings = launcherSettings(state.settings);
   if (!Array.isArray(state.instances)) throw new Error('实例列表格式无效');
-  window = new BrowserWindow({ width: 1200, height: 820, minWidth: 1000, minHeight: 700,
+  const area = screen.getPrimaryDisplay().workAreaSize;
+  const width = Math.min(960, area.width - 32), height = Math.min(660, area.height - 32);
+  window = new BrowserWindow({ width, height, minWidth: Math.min(820, width), minHeight: Math.min(560, height),
     title: 'LMCL', backgroundColor: '#f5f6fa', show: !smoke, autoHideMenuBar: true,
     webPreferences: { preload: path.join(directory, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
