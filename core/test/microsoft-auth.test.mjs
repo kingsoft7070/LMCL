@@ -124,18 +124,29 @@ test('strictly validates successful responses and does not expose response bodie
 });
 
 test('maps request timeout and caller cancellation to stable errors', async () => {
+  const pendingPromises = [];
   const hangingFetch = (_url, { signal }) => new Promise((resolve, reject) => {
-    if (signal?.aborted) return reject(signal.reason);
-    signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+    const onAbort = () => reject(new Error('aborted'));
+    signal?.addEventListener('abort', onAbort, { once: true });
+    pendingPromises.push({ reject, onAbort, signal });
   });
-  const timed = createMicrosoftAuthClient({ fetch: hangingFetch, clientId: 'id', timeoutMs: 10 });
-  await assert.rejects(timed.requestDeviceCode(), error => error.code === 'TIMEOUT');
 
-  const controller = new AbortController();
-  const cancelled = createMicrosoftAuthClient({ fetch: hangingFetch, clientId: 'id' });
-  const pending = cancelled.requestDeviceCode({ signal: controller.signal });
-  controller.abort();
-  await assert.rejects(pending, error => error.code === 'CANCELLED');
+  try {
+    const timed = createMicrosoftAuthClient({ fetch: hangingFetch, clientId: 'id', timeoutMs: 10 });
+    await assert.rejects(timed.requestDeviceCode(), error => error.code === 'TIMEOUT');
+
+    const controller = new AbortController();
+    const cancelled = createMicrosoftAuthClient({ fetch: hangingFetch, clientId: 'id' });
+    const pending = cancelled.requestDeviceCode({ signal: controller.signal });
+    controller.abort();
+    await assert.rejects(pending, error => error.code === 'CANCELLED');
+  } finally {
+    // 确保清理所有未完成的 Promise，决不留任何 pending 给 Node 事件循环
+    for (const item of pendingPromises) {
+      item.signal?.removeEventListener('abort', item.onAbort);
+      item.reject(new Error('cleanup'));
+    }
+  }
 });
 
 test('redaction removes bearer, protocol and JWT-like credentials', () => {
