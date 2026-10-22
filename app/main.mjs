@@ -14,6 +14,8 @@ import { getJSON } from './lib/network.mjs';
 import { createAccount } from '../core/src/account-model.mjs';
 import { createCredentialVault } from './lib/credential-vault.mjs';
 import { createMangoRuntime, migrateRuntimeState, runtimeSnapshot, selectedOfflineProfile } from './lib/mango-runtime.mjs';
+import { exportServerPackArchive, validateServerConnection } from './lib/instance-pack-exporter.mjs';
+import { installServerPack, resolveInstanceServer } from './lib/server-pack-installer.mjs';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const documentURL = pathToFileURL(path.join(directory, 'index.html')).href;
@@ -162,7 +164,8 @@ function registerHandlers() {
     const required = metadata.javaVersion?.majorVersion ?? entry.javaMajor;
     const java = available.find(item => item.major === required);
     if (!java) throw new Error(`这个版本需要 Java ${required}，请在设置页选择对应的 Java`);
-    const args = launchArguments(metadata, { root: entry.root, profile, memoryMB: state.memoryMB });
+    const directServer = resolveInstanceServer(entry);
+    const args = launchArguments(metadata, { root: entry.root, profile, memoryMB: state.memoryMB, server: directServer });
     const log = await open(path.join(entry.root, 'lmcl-game.log'), 'w');
     try {
       const child = spawn(java.path, args, { cwd: entry.root, shell: false, windowsHide: true, detached: false, stdio: ['ignore', log.fd, log.fd] });
@@ -176,6 +179,33 @@ function registerHandlers() {
     } finally { launching.delete(id); }
   });
   register('data:folder', async () => { const result = await shell.openPath(dataRoot); if (result) throw new Error(result); });
+  register('pack:export', async ({ instanceId, archivePath, packId, name, version, serverConnection }) => {
+    const entry = instance(instanceId);
+    return await exportServerPackArchive({
+      instanceDir: entry.root,
+      archivePath,
+      packId,
+      name,
+      version,
+      serverConnection
+    });
+  });
+  register('server:install', async ({ archivePath, targetInstanceName, baseVersionId }) => {
+    const targetDir = path.join(dataRoot, 'instances', targetInstanceName);
+    const res = await installServerPack({ archivePath, targetInstanceDir: targetDir, baseVersionId });
+    const newEntry = {
+      id: `server:${randomUUID()}`,
+      name: res.manifest.name || targetInstanceName,
+      version: baseVersionId || '1.20.1',
+      root: targetDir,
+      javaMajor: 17,
+      serverConnection: res.serverConnection
+    };
+    state.instances.push(newEntry);
+    await persist();
+    notify();
+    return newEntry;
+  });
   register('bedrock:open', async () => {
     if (process.platform !== 'win32') throw new Error('此入口仅适用于 Windows');
     await shell.openExternal('minecraft://');

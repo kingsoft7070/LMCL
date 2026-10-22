@@ -59,7 +59,7 @@ async function refreshMango({ saves = false } = {}) {
 
 function renderHome() {
   const actions = button('cloud', '云存档', 'secondary') + button('import', '导入目录') + button('go-download', '＋ 下载游戏', 'primary');
-  const list = state.instances.length ? state.instances.map(item => `<article class="instance"><div class="cube">◇</div><div class="instance-info"><h3>${escape(item.name)}</h3><p>Minecraft ${escape(item.version)} <span class="tag">原版</span>　Java ${escape(item.javaMajor)}</p></div><div class="actions">${button('instance-folder', '文件夹', 'quiet small', `data-id="${escape(item.id)}"`)}${button('launch', state.running.includes(item.id) ? '运行中' : '启动游戏', 'primary', `data-id="${escape(item.id)}" ${state.busy || state.running.includes(item.id) ? 'disabled' : ''}`)}</div></article>`).join('') :
+  const list = state.instances.length ? state.instances.map(item => `<article class="instance"><div class="cube">${item.serverConnection ? '🌐' : '◇'}</div><div class="instance-info"><h3>${escape(item.name)}${item.serverConnection ? ` <span class="status-badge verified" style="font-size:11px;">直连: ${escape(item.serverConnection.host)}:${escape(item.serverConnection.port)}</span>` : ''}</h3><p>Minecraft ${escape(item.version)} <span class="tag">${item.serverConnection ? '服务器包' : '原版'}</span>　Java ${escape(item.javaMajor)}</p></div><div class="actions">${button('export-pack', '发布整合包', 'secondary small', `data-id="${escape(item.id)}"`)}${button('instance-folder', '文件夹', 'quiet small', `data-id="${escape(item.id)}"`)}${button('launch', state.running.includes(item.id) ? '运行中' : (item.serverConnection ? '进入服务器' : '启动游戏'), 'primary', `data-id="${escape(item.id)}" ${state.busy || state.running.includes(item.id) ? 'disabled' : ''}`)}</div></article>`).join('') :
     `<section class="empty"><div class="empty-symbol">＋</div><h3>还没有游戏实例</h3><p>下载一个原版版本，或导入已有的游戏目录<br>每个新下载的实例都有独立的存档和设置</p><div class="actions">${button('go-download', '下载游戏', 'primary')}${button('import', '导入已有目录')}</div></section>`;
   const profile = state.profile ?? state.accounts?.find(account => account.id === state.selectedAccountId)?.profile;
   return heading('我的游戏', '管理版本和实例，按自己的方式玩', actions) +
@@ -134,6 +134,32 @@ document.addEventListener('click', async event => {
     if (action === 'versions') { element.disabled = true; versions = await api.versions(); render(); }
     if (action === 'import') { const added = await api.importGame(); if (added?.length) { state = await api.getState(); page = 'home'; render(); toast(`已导入 ${added.length} 个原版实例`); } }
     if (action === 'launch') { element.disabled = true; await api.launch(id); toast('已启动，游戏窗口将单独打开'); }
+    if (action === 'export-pack') {
+      const item = state.instances.find(x => x.id === id);
+      if (!item) return;
+      const host = prompt('请输入服务器连接地址 (Host / IP)：', item.serverConnection?.host || 'play.mangomc.top');
+      if (!host) return;
+      const portStr = prompt('请输入服务器端口 (Port)：', String(item.serverConnection?.port || 25565));
+      if (!portStr) return;
+      const port = parseInt(portStr, 10);
+      const outName = `${item.name.replace(/[^a-zA-Z0-9_-]/g, '_')}_server_pack.zip`;
+      const archivePath = `${state.dataRoot}/${outName}`;
+      toast('正在打包并排除敏感单人存档，请稍候…');
+      try {
+        await api.exportServerPack({
+          instanceId: id,
+          archivePath,
+          packId: `pack_${Date.now()}`,
+          name: item.name,
+          version: item.version,
+          serverConnection: { host: host.trim(), port }
+        });
+        toast(`整合包打包成功！已保存到：${outName}`);
+      } catch (err) {
+        toast(`导出失败：${err.message}`);
+      }
+      return;
+    }
     if (action === 'instance-folder') await api.openGameFolder(id);
     if (action === 'cancel') await api.cancel();
     if (action === 'java-detect') { const found = await api.discoverJava(); toast(found.length ? `找到 ${found.length} 个 Java 环境` : '未找到 Java'); }
