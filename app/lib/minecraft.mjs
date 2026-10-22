@@ -6,6 +6,7 @@ import { pipeline } from 'node:stream/promises';
 import yauzl from 'yauzl';
 import { inside, libraryPlan } from './minecraft-rules.mjs';
 import { getJSON, downloadQueue } from './network.mjs';
+import { resolveVersion } from '../../core/src/version-resolver.mjs';
 
 const MANIFEST = 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json';
 export async function versionCatalog(signal) {
@@ -114,10 +115,18 @@ export async function importDirectory(root) {
 }
 
 export async function readMetadata(instance) {
-  const file = inside(instance.root, `versions/${instance.version}/${instance.version}.json`);
-  const metadata = JSON.parse(await readFile(file, 'utf8'));
-  if (metadata.id !== instance.version) throw new Error('实例的版本信息不匹配');
-  return metadata;
+  const versions = new Map();
+  let currentId = instance.version;
+  for (let depth = 0; depth < 64; depth++) {
+    if (versions.has(currentId)) throw new Error('实例版本继承存在循环');
+    const file = inside(instance.root, `versions/${currentId}/${currentId}.json`);
+    const metadata = JSON.parse(await readFile(file, 'utf8'));
+    if (metadata.id !== currentId) throw new Error('实例的版本信息不匹配');
+    versions.set(currentId, metadata);
+    if (!metadata.inheritsFrom) return resolveVersion(instance.version, versions);
+    currentId = metadata.inheritsFrom;
+  }
+  throw new Error('实例版本继承层级过深');
 }
 
 export { extractNatives };

@@ -16,12 +16,15 @@ import { createCredentialVault } from './lib/credential-vault.mjs';
 import { createMangoRuntime, migrateRuntimeState, runtimeSnapshot, selectedOfflineProfile } from './lib/mango-runtime.mjs';
 import { exportServerPackArchive, validateServerConnection } from './lib/instance-pack-exporter.mjs';
 import { installServerPack, resolveInstanceServer } from './lib/server-pack-installer.mjs';
+import { loaderVersions, loaderProfile, downloadLoaderArtifact } from './lib/loader-source.mjs';
+import { createLoaderInstallPlan } from '../core/src/loader-install-plan.mjs';
+import { installLoader } from './lib/loader-installer.mjs';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const documentURL = pathToFileURL(path.join(directory, 'index.html')).href;
 const smoke = process.argv.includes('--smoke-test');
 if (smoke) app.disableHardwareAcceleration();
-let window, state, stateFile, dataRoot, task, javaCache, mangoRuntime;
+let window, state, stateFile, dataRoot, task, javaCache, mangoRuntime, buildConfig = { mangoApiRoot: '' };
 const running = new Map();
 const launching = new Set();
 let saveQueue = Promise.resolve();
@@ -43,7 +46,7 @@ function snapshot() {
     dataRoot, running: [...running.keys()], busy: Boolean(task), java: javaCache ?? [] });
 }
 function normalizeSettings(value) {
-  const defaultApi = process.env.MANGO_DEFAULT_API || '';
+  const defaultApi = buildConfig.mangoApiRoot || process.env.MANGO_DEFAULT_API || '';
   const mangoApiRoot = typeof value?.mangoApiRoot === 'string' && value.mangoApiRoot ? value.mangoApiRoot : defaultApi;
   return { ...launcherSettings(value), mangoApiRoot };
 }
@@ -130,13 +133,36 @@ function registerHandlers() {
     state.memoryMB = memory; await persist(); notify();
   });
   register('versions:list', async () => (await versionCatalog()).map(({ id, type, releaseTime }) => ({ id, type, releaseTime })));
-  register('game:install', async ({ version, name }) => {
+  register('loaders:list', async ({ loader, minecraftVersion }) => loaderVersions(loader, minecraftVersion));
+  register('game:install', async ({ version, name, loader = 'vanilla', loaderVersion }) => {
     if (task) throw new Error('请等待当前下载结束，或先取消下载');
     if (typeof version !== 'string' || !/^[a-zA-Z0-9_.-]{1,100}$/.test(version) || typeof name !== 'string' || name.length > 100) throw new Error('版本或名称无效');
+    if (!['vanilla', 'fabric', 'quilt'].includes(loader)) throw new Error('加载器类型无效');
     task = new AbortController(); notify();
+    let entry;
     try {
-      const entry = await installVanilla({ version, name, gamesRoot: path.join(dataRoot, 'instances'), signal: task.signal, onProgress: progress });
+      entry = await installVanilla({ version, name, gamesRoot: path.join(dataRoot, 'instances'), signal: task.signal, onProgress: progress });
+      if (loader !== 'vanilla') {
+        progress({ phase: `读取 ${loader === 'fabric' ? 'Fabric' : 'Quilt'} 版本信息`, done: 0, total: 0 });
+        let selectedLoader = loaderVersion;
+        if (!selectedLoader) {
+          const available = await loaderVersions(loader, version, task.signal);
+          selectedLoader = available.find(x => x.stable)?.version ?? available[0]?.version;
+        }
+        if (!selectedLoader) throw new Error('没有找到兼容的加载器版本');
+        const vanillaMetadata = await readMetadata(entry);
+        const profile = await loaderProfile(loader, version, selectedLoader, task.signal);
+        const plan = createLoaderInstallPlan(vanillaMetadata, profile);
+        const installed = await installLoader({ plan, root: entry.root, downloader: downloadLoaderArtifact,
+          signal: task.signal, onProgress: event => progress({ phase: `安装 ${loader === 'fabric' ? 'Fabric' : 'Quilt'} 加载器`, ...event }) });
+        entry.version = installed.versionId;
+        entry.loader = loader;
+        entry.loaderVersion = selectedLoader;
+      }
       state.instances.push(entry); await persist(); return entry;
+    } catch (error) {
+      if (entry && !state.instances.some(x => x.id === entry.id)) await rm(entry.root, { recursive: true, force: true }).catch(() => {});
+      throw error;
     } finally { task = null; progress(null); notify(); }
   });
   register('game:cancel', () => { task?.abort(); });
@@ -276,6 +302,8 @@ async function smokeTest() {
 app.whenReady().then(async () => {
   if (smoke) app.setPath('userData', await mkdtemp(path.join(os.tmpdir(), 'lmcl-smoke-')));
   dataRoot = app.getPath('userData'); stateFile = path.join(dataRoot, 'launcher.json');
+  try { buildConfig = JSON.parse(await readFile(path.join(directory, 'build-config.json'), 'utf8')); }
+  catch { buildConfig = { mangoApiRoot: '' }; }
   await mkdir(dataRoot, { recursive: true });
   try { state = JSON.parse(await readFile(stateFile, 'utf8')); }
   catch (error) {

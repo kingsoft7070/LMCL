@@ -65,7 +65,6 @@ export function expandArguments(entries, values, platform = process.platform, ar
 }
 
 export function launchArguments(metadata, { root, profile, memoryMB = 4096, platform = process.platform, arch = process.arch, server }) {
-  if (metadata.inheritsFrom) throw new Error('这版暂不支持导入的加载器继承配置，请先使用原版实例');
   if (!Number.isInteger(memoryMB) || memoryMB < 1024 || memoryMB > 32768) throw new Error('内存范围为 1024–32768 MB');
   if (!metadata.arguments || !metadata.mainClass) throw new Error('当前仅支持 1.13 及更新版本的标准原版配置');
   const { artifacts } = libraryPlan(metadata, platform, arch);

@@ -6,7 +6,8 @@ import { mkdir, rename, rm, stat, unlink } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 
 const STORAGE_ROOT = path.resolve(process.env.STORAGE_ROOT || '/data/mango-storage');
-const SECRET = process.env.STORAGE_SECRET || 'mango_storage_hmac_secret_key_2026';
+const SECRET = process.env.STORAGE_SECRET;
+if (typeof SECRET !== 'string' || SECRET.length < 32) throw new Error('STORAGE_SECRET must contain at least 32 characters');
 const PORT = Number(process.env.PORT || 9005);
 const HOST = process.env.HOST || '127.0.0.1';
 

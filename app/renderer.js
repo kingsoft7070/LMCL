@@ -5,6 +5,7 @@ let versions = [];
 let versionFilter = 'release';
 let draftName = '';
 let draftVersion = '';
+let draftLoader = 'vanilla';
 let currentProgress;
 let mango = { loaded: false, status: null, saves: [], savesLoaded: false };
 let toastTimer;
@@ -70,7 +71,7 @@ function renderDownloads() {
   const choices = versions.filter(version => version.type === versionFilter);
   if (!choices.some(version => version.id === draftVersion)) draftVersion = choices[0]?.id ?? '';
   return heading('下载游戏', '安装一个新版本，让游戏目录保持整洁', button('versions', versions.length ? '刷新版本列表' : '获取版本列表')) +
-    `<div class="two-columns"><section class="panel"><h2>原版 Minecraft</h2><p>选择版本，文件会下载并校验到独立实例中</p><form id="install-form"><div class="form-grid"><label>版本类型<select id="version-type"><option value="release" ${versionFilter === 'release' ? 'selected' : ''}>正式版</option><option value="snapshot" ${versionFilter === 'snapshot' ? 'selected' : ''}>快照版</option></select></label><label>游戏版本<select id="version-select" name="version" ${!choices.length ? 'disabled' : ''}>${choices.length ? choices.map(version => `<option value="${escape(version.id)}" ${version.id === draftVersion ? 'selected' : ''}>${escape(version.id)}</option>`).join('') : '<option>先获取版本列表</option>'}</select></label></div><label>实例名称<input id="instance-name" name="name" maxlength="100" placeholder="例如：我的生存存档" value="${escape(draftName)}"></label><button type="submit" class="primary full" ${!choices.length || state.busy ? 'disabled' : ''}>${state.busy ? '正在下载…' : '下载并创建实例'}</button></form></section><section class="panel"><h2>开始之前</h2><p>下载完成后，在设置里选择游戏所需的 Java，再创建离线角色。</p><div class="note warning">Java 需要自行安装。加载器、模组和整合包功能仍在开发中。</div></section></div>`;
+    `<div class="two-columns"><section class="panel"><h2>原版 Minecraft</h2><p>选择版本，文件会下载并校验到独立实例中</p><form id="install-form"><div class="form-grid"><label>版本类型<select id="version-type"><option value="release" ${versionFilter === 'release' ? 'selected' : ''}>正式版</option><option value="snapshot" ${versionFilter === 'snapshot' ? 'selected' : ''}>快照版</option></select></label><label>游戏版本<select id="version-select" name="version" ${!choices.length ? 'disabled' : ''}>${choices.length ? choices.map(version => `<option value="${escape(version.id)}" ${version.id === draftVersion ? 'selected' : ''}>${escape(version.id)}</option>`).join('') : '<option>先获取版本列表</option>'}</select></label><label>加载器<select id="loader-select" name="loader"><option value="vanilla" ${draftLoader === 'vanilla' ? 'selected' : ''}>原版</option><option value="fabric" ${draftLoader === 'fabric' ? 'selected' : ''}>Fabric（最新稳定版）</option><option value="quilt" ${draftLoader === 'quilt' ? 'selected' : ''}>Quilt（最新稳定版）</option></select></label></div><label>实例名称<input id="instance-name" name="name" maxlength="100" placeholder="例如：我的生存存档" value="${escape(draftName)}"></label><button type="submit" class="primary full" ${!choices.length || state.busy ? 'disabled' : ''}>${state.busy ? '正在下载…' : '下载并创建实例'}</button></form></section><section class="panel"><h2>开始之前</h2><p>下载完成后，在设置里选择游戏所需的 Java，再创建离线角色。</p><div class="note warning">Java 需要自行安装。Fabric 与 Quilt 已支持安全事务安装；Forge、NeoForge、模组市场和通用整合包仍在完善。</div></section></div>`;
 }
 function mangoAccountPanel() {
   if (!mango.loaded) return `<section class="panel mango-panel"><h2>Mango Network</h2><p class="last">正在读取账户状态…</p></section>`;
@@ -171,6 +172,7 @@ document.addEventListener('click', async event => {
 document.addEventListener('change', event => {
   if (event.target.id === 'version-type') { versionFilter = event.target.value; draftVersion = ''; render(); }
   if (event.target.id === 'version-select') draftVersion = event.target.value;
+  if (event.target.id === 'loader-select') draftLoader = event.target.value;
 });
 document.addEventListener('input', event => { if (event.target.id === 'instance-name') draftName = event.target.value; });
 document.addEventListener('submit', async event => {
@@ -194,7 +196,7 @@ document.addEventListener('submit', async event => {
     if (form.id === 'mango-verify-form') { await api.verifyMango(data.get('email'), data.get('code')); await refreshMango(); render(); toast('邮箱验证成功'); return; }
     if (form.id === 'profile-form') { await api.saveProfile(data.get('name')); toast('离线角色已保存'); }
     if (form.id === 'memory-form') { await api.saveMemory(Number(data.get('memory'))); toast('内存设置已保存'); }
-    if (form.id === 'install-form') { const entry = await api.install({ version: data.get('version'), name: data.get('name') }); page = 'home'; draftName = ''; state = await api.getState(); render(); toast(`${entry.name} 已下载完成`); }
+    if (form.id === 'install-form') { const entry = await api.install({ version: data.get('version'), name: data.get('name'), loader: data.get('loader') || 'vanilla' }); page = 'home'; draftName = ''; state = await api.getState(); render(); toast(`${entry.name} 已下载完成${entry.loader ? `，已安装 ${entry.loader}` : ''}`); }
   } catch (error) { toast(error?.message); }
   finally {
     const password = form.querySelector('input[type="password"]');

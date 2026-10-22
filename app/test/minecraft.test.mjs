@@ -60,8 +60,9 @@ test('modern native artifact classifiers select the target CPU even when Mojang 
   }
 });
 
-test('unsupported inheritance, missing placeholders and unsafe filesystem paths are rejected', () => {
-  assert.throws(() => launchArguments({ ...metadata, inheritsFrom: '1.20.1' }, { root: '.', profile: createOfflineProfile('Player') }));
+test('resolved loader metadata, missing placeholders and unsafe filesystem paths are handled safely', () => {
+  const resolved = { ...metadata, id: 'fabric-loader-test' };
+  assert.doesNotThrow(() => launchArguments(resolved, { root: '.', profile: createOfflineProfile('Player') }));
   assert.throws(() => expandArguments(['${not_supported}'], {}));
   for (const file of ['../evil', 'libs/../../evil', 'libs\\evil', 'libs/NUL.dll']) assert.throws(() => inside('/tmp/game', file));
   assert.throws(() => launchArguments(metadata, { root: '.', profile: createOfflineProfile('Player'), memoryMB: 1 }));

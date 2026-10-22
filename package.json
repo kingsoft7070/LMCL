@@ -90,7 +90,9 @@
       ],
       "category": "public.app-category.games",
       "artifactName": "LMCL-${version}-mac-${arch}.${ext}",
-      "identity": null
+      "identity": "-",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
     }
   }
 }

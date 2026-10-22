@@ -56,8 +56,10 @@ jobs:
         run: |
           if [ "${{ github.event.inputs.mango_edition }}" = "true" ] || [ "${{ startsWith(github.ref, 'refs/tags/') }}" = "true" ]; then
             echo "MANGO_DEFAULT_API=https://api.mangomc.top/mango/" >> $GITHUB_ENV
+            printf '{\n  "mangoApiRoot": "https://api.mangomc.top/mango/"\n}\n' > app/build-config.json
             echo "Building Mango Network Edition"
           else
+            printf '{\n  "mangoApiRoot": ""\n}\n' > app/build-config.json
             echo "Building Community Edition"
           fi
 

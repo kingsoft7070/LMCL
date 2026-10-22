@@ -7,15 +7,13 @@ import { MemoryUserRepository, MemorySessionRepository, MemoryCloudSaveRepositor
 const config = loadConfig({
   HOST: process.env.MANGO_HOST || '127.0.0.1',
   PORT: process.env.MANGO_PORT || '8795',
-  TOKEN_PEPPER: process.env.MANGO_TOKEN_PEPPER || 'a'.repeat(32),
+  TOKEN_PEPPER: process.env.MANGO_TOKEN_PEPPER,
   VERIFICATION_TTL_MS: process.env.MANGO_VERIFY_TTL || '600000',
   ACCESS_TTL_MS: process.env.MANGO_ACCESS_TTL || '900000',
   REFRESH_TTL_MS: process.env.MANGO_REFRESH_TTL || '2592000000'
 });
 
-let verificationDelivery = async ({ to, code }) => {
-  console.log(`[DEV/TEST] Verification code for ${to}: ${code}`);
-};
+let verificationDelivery = async () => { throw new Error('SMTP delivery is not configured'); };
 
 if (process.env.SMTP_HOST && process.env.SMTP_USERNAME) {
   verificationDelivery = createVerificationDelivery({
