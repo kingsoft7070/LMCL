@@ -111,12 +111,11 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          find all-releases -type f -exec cp {} dist/ \;
-          cd dist
-          cat *SHA256SUMS.txt > ALL_SHA256SUMS.txt 2>/dev/null || true
-          rm -f *SHA256SUMS.txt
-          mv ALL_SHA256SUMS.txt SHA256SUMS.txt
-          ls -la
+          # 将所有产物集中到 dist 目录 (排除旧的单项 SHA256 文件)
+          find all-releases -type f ! -name "*SHA256SUMS*" -exec cp {} dist/ \;
+          # 合并全部校验和
+          cat all-releases/*/*SHA256SUMS* > dist/SHA256SUMS.txt 2>/dev/null || true
+          ls -la dist
 
       - name: Publish Release
         uses: softprops/action-gh-release@v2
