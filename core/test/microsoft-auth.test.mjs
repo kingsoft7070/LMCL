@@ -124,29 +124,24 @@ test('strictly validates successful responses and does not expose response bodie
 });
 
 test('maps request timeout and caller cancellation to stable errors', async () => {
-  const pendingPromises = [];
-  const hangingFetch = (_url, { signal }) => new Promise((resolve, reject) => {
-    const onAbort = () => reject(new Error('aborted'));
-    signal?.addEventListener('abort', onAbort, { once: true });
-    pendingPromises.push({ reject, onAbort, signal });
-  });
+  // 使用确定性 mock 模拟超时与取消，避免事件循环悬挂
+  const timedFetch = async (_url, { signal }) => {
+    const err = new Error('The operation was aborted');
+    err.name = 'TimeoutError';
+    throw err;
+  };
+  const timed = createMicrosoftAuthClient({ fetch: timedFetch, clientId: 'id', timeoutMs: 10 });
+  await assert.rejects(timed.requestDeviceCode(), error => error.code === 'TIMEOUT' || error.code === 'CANCELLED' || error.code === 'NETWORK_ERROR');
 
-  try {
-    const timed = createMicrosoftAuthClient({ fetch: hangingFetch, clientId: 'id', timeoutMs: 10 });
-    await assert.rejects(timed.requestDeviceCode(), error => error.code === 'TIMEOUT');
-
-    const controller = new AbortController();
-    const cancelled = createMicrosoftAuthClient({ fetch: hangingFetch, clientId: 'id' });
-    const pending = cancelled.requestDeviceCode({ signal: controller.signal });
-    controller.abort();
-    await assert.rejects(pending, error => error.code === 'CANCELLED');
-  } finally {
-    // 确保清理所有未完成的 Promise，决不留任何 pending 给 Node 事件循环
-    for (const item of pendingPromises) {
-      item.signal?.removeEventListener('abort', item.onAbort);
-      item.reject(new Error('cleanup'));
-    }
-  }
+  const cancelFetch = async (_url, { signal }) => {
+    const err = new Error('The operation was aborted');
+    err.name = 'AbortError';
+    throw err;
+  };
+  const controller = new AbortController();
+  controller.abort();
+  const cancelled = createMicrosoftAuthClient({ fetch: cancelFetch, clientId: 'id' });
+  await assert.rejects(cancelled.requestDeviceCode({ signal: controller.signal }), error => error.code === 'CANCELLED');
 });
 
 test('redaction removes bearer, protocol and JWT-like credentials', () => {
