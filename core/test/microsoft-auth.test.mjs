@@ -125,7 +125,8 @@ test('strictly validates successful responses and does not expose response bodie
 
 test('maps request timeout and caller cancellation to stable errors', async () => {
   const hangingFetch = (_url, { signal }) => new Promise((resolve, reject) => {
-    signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    if (signal?.aborted) return reject(signal.reason);
+    signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
   });
   const timed = createMicrosoftAuthClient({ fetch: hangingFetch, clientId: 'id', timeoutMs: 10 });
   await assert.rejects(timed.requestDeviceCode(), error => error.code === 'TIMEOUT');
