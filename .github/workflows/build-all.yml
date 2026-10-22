@@ -99,7 +99,7 @@ jobs:
   release:
     name: Create GitHub Release
     needs: build
-    if: startsWith(github.ref, 'refs/tags/')
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') }}
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
@@ -121,6 +121,8 @@ jobs:
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v0.2.0-mango
+          name: "LMCL v0.2.0 (Mango Network Edition)"
           files: dist/*
           draft: false
           prerelease: false
