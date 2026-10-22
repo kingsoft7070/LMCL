@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, screen, safeStorage } from 'electron';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -11,12 +11,15 @@ import { versionCatalog, installVanilla, importDirectory, readMetadata } from '.
 import { launchArguments } from './lib/minecraft-rules.mjs';
 import { discoverJava, inspectJava } from './lib/java.mjs';
 import { getJSON } from './lib/network.mjs';
+import { createAccount } from '../core/src/account-model.mjs';
+import { createCredentialVault } from './lib/credential-vault.mjs';
+import { createMangoRuntime, migrateRuntimeState, runtimeSnapshot, selectedOfflineProfile } from './lib/mango-runtime.mjs';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const documentURL = pathToFileURL(path.join(directory, 'index.html')).href;
 const smoke = process.argv.includes('--smoke-test');
 if (smoke) app.disableHardwareAcceleration();
-let window, state, stateFile, dataRoot, task, javaCache;
+let window, state, stateFile, dataRoot, task, javaCache, mangoRuntime;
 const running = new Map();
 const launching = new Set();
 let saveQueue = Promise.resolve();
@@ -34,9 +37,14 @@ function persist() {
   return saveQueue;
 }
 function snapshot() {
-  return { ...structuredClone(state), version: app.getVersion(), platform: process.platform,
-    dataRoot, running: [...running.keys()], busy: Boolean(task), java: javaCache ?? [] };
+  return runtimeSnapshot(state, { version: app.getVersion(), platform: process.platform,
+    dataRoot, running: [...running.keys()], busy: Boolean(task), java: javaCache ?? [] });
 }
+function normalizeSettings(value) {
+  const mangoApiRoot = typeof value?.mangoApiRoot === 'string' ? value.mangoApiRoot : '';
+  return { ...launcherSettings(value), mangoApiRoot };
+}
+
 function notify() { if (window && !window.isDestroyed()) window.webContents.send('state', snapshot()); }
 function progress(value) { if (window && !window.isDestroyed()) window.webContents.send('progress', value); }
 function instance(id) {
@@ -65,15 +73,20 @@ function register(name, callback) {
 function registerHandlers() {
   register('state:get', () => snapshot());
   register('profile:save', async name => {
-    state.profile = createOfflineProfile(name); await persist(); notify(); return state.profile;
+    const profile = createOfflineProfile(name);
+    const id = `offline:${profile.uuid.replaceAll('-', '').toLowerCase()}`;
+    const account = createAccount({ id, provider: 'offline', profile: { id: profile.uuid, name: profile.name }, credentialRef: null });
+    state.accounts = [...state.accounts.filter(item => item.provider !== 'offline'), account];
+    state.selectedAccountId = id;
+    await persist(); notify(); return profile;
   });
   register('mode:set', async mode => {
-    state.settings = switchLauncherMode(state.settings, mode); await persist(); notify();
+    state.settings = { ...switchLauncherMode(state.settings, mode), mangoApiRoot: state.settings.mangoApiRoot }; await persist(); notify();
   });
   register('provider:add', async input => {
     const provider = serverProvider(input);
     if (state.settings.providers.some(item => item.id.toLowerCase() === provider.id.toLowerCase())) throw new Error('已有同名的接入方 ID');
-    state.settings = launcherSettings({ ...state.settings, providers: [...state.settings.providers, provider] });
+    state.settings = normalizeSettings({ ...state.settings, providers: [...state.settings.providers, provider] });
     await persist(); notify();
   });
   register('provider:remove', async id => {
@@ -93,6 +106,12 @@ function registerHandlers() {
       } : { state: 'unknown', online: null, max: null },
     }));
   });
+  register('mango:register', (email, password) => mangoRuntime.register(email, password));
+  register('mango:verify', (email, code) => mangoRuntime.verify(email, code));
+  register('mango:login', async (email, password) => { const value = await mangoRuntime.login(email, password); notify(); return value; });
+  register('mango:logout', async () => { const value = await mangoRuntime.logout(); notify(); return value; });
+  register('mango:status', () => mangoRuntime.status());
+  register('mango:saves', () => mangoRuntime.saves());
   register('java:discover', async () => { javaCache = await discoverJava(state.javaPath); notify(); return javaCache; });
   register('java:choose', async () => {
     const result = await dialog.showOpenDialog(window, { title: '选择 Java 可执行文件', properties: ['openFile'],
@@ -131,7 +150,8 @@ function registerHandlers() {
   });
   register('game:launch', async id => {
     if (task) throw new Error('请先等待下载完成');
-    if (!state.profile) throw new Error('请先在账户页创建离线角色');
+    const profile = selectedOfflineProfile(state);
+    if (!profile) throw new Error('请先在账户页创建离线角色');
     if (running.has(id) || launching.has(id)) throw new Error('这个实例已经在启动或运行');
     launching.add(id);
     try {
@@ -142,7 +162,7 @@ function registerHandlers() {
     const required = metadata.javaVersion?.majorVersion ?? entry.javaMajor;
     const java = available.find(item => item.major === required);
     if (!java) throw new Error(`这个版本需要 Java ${required}，请在设置页选择对应的 Java`);
-    const args = launchArguments(metadata, { root: entry.root, profile: createOfflineProfile(state.profile.name), memoryMB: state.memoryMB });
+    const args = launchArguments(metadata, { root: entry.root, profile, memoryMB: state.memoryMB });
     const log = await open(path.join(entry.root, 'lmcl-game.log'), 'w');
     try {
       const child = spawn(java.path, args, { cwd: entry.root, shell: false, windowsHide: true, detached: false, stdio: ['ignore', log.fd, log.fd] });
@@ -229,10 +249,30 @@ app.whenReady().then(async () => {
   try { state = JSON.parse(await readFile(stateFile, 'utf8')); }
   catch (error) {
     if (error.code !== 'ENOENT') throw new Error('配置文件无法读取，请备份后检查 launcher.json');
-    state = { schemaVersion: 1, settings: launcherSettings(), profile: null, instances: [], javaPath: '', memoryMB: 4096 };
+    state = { schemaVersion: 2, settings: { ...launcherSettings(), mangoApiRoot: '' }, accounts: [], selectedAccountId: null, instances: [], javaPath: '', memoryMB: 4096 };
   }
-  state.settings = launcherSettings(state.settings);
-  if (!Array.isArray(state.instances)) throw new Error('实例列表格式无效');
+  state = migrateRuntimeState(state);
+  state.settings = normalizeSettings(state.settings);
+  const vault = createCredentialVault({
+    file: path.join(dataRoot, 'credentials.vault'), storeId: 'credential-vault',
+    encrypt: plaintext => {
+      if (!safeStorage.isEncryptionAvailable()) throw new Error('系统安全存储不可用');
+      return safeStorage.encryptString(plaintext);
+    },
+    decrypt: encrypted => {
+      if (!safeStorage.isEncryptionAvailable()) throw new Error('系统安全存储不可用');
+      return safeStorage.decryptString(Buffer.from(encrypted));
+    },
+    atomicIO: {
+      readFile,
+      async writeFileAtomic(file, bytes) {
+        await writeFile(`${file}.tmp`, bytes, { mode: 0o600 });
+        await rename(`${file}.tmp`, file);
+      },
+    },
+  });
+  mangoRuntime = createMangoRuntime({ getState: () => state, vault, fetch: globalThis.fetch });
+  await persist();
   const area = screen.getPrimaryDisplay().workAreaSize;
   const width = Math.min(960, area.width - 32), height = Math.min(660, area.height - 32);
   window = new BrowserWindow({ width, height, minWidth: Math.min(820, width), minHeight: Math.min(560, height),
