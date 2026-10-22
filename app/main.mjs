@@ -43,7 +43,8 @@ function snapshot() {
     dataRoot, running: [...running.keys()], busy: Boolean(task), java: javaCache ?? [] });
 }
 function normalizeSettings(value) {
-  const mangoApiRoot = typeof value?.mangoApiRoot === 'string' ? value.mangoApiRoot : '';
+  const defaultApi = process.env.MANGO_DEFAULT_API || '';
+  const mangoApiRoot = typeof value?.mangoApiRoot === 'string' && value.mangoApiRoot ? value.mangoApiRoot : defaultApi;
   return { ...launcherSettings(value), mangoApiRoot };
 }
 
